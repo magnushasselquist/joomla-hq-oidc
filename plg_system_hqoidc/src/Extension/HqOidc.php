@@ -9,10 +9,11 @@ namespace Joomla\Plugin\System\HqOidc\Extension;
 
 \defined('_JEXEC') or die;
 
-use Jumbojett\OpenIDConnectClient;
-use Jumbojett\OpenIDConnectClientException;
+use Firebase\JWT\JWT;
 use Joomla\CMS\Application\CMSApplicationInterface;
 use Joomla\CMS\Authentication\Authentication;
+use Joomla\CMS\Event\User\AfterLoginEvent;
+use Joomla\CMS\Event\User\LoginEvent;
 use Joomla\CMS\Factory;
 use Joomla\CMS\Language\Text;
 use Joomla\CMS\Log\Log;
@@ -23,7 +24,13 @@ use Joomla\CMS\User\User;
 use Joomla\CMS\User\UserFactoryInterface;
 use Joomla\CMS\User\UserHelper;
 use Joomla\Database\DatabaseInterface;
+use Joomla\Event\EventInterface;
 use Joomla\Event\SubscriberInterface;
+use Joomla\Plugin\System\HqOidc\Oidc\Client;
+use Joomla\Plugin\System\HqOidc\Oidc\Discovery;
+use Joomla\Plugin\System\HqOidc\Oidc\JoomlaHttpClient;
+use Joomla\Plugin\System\HqOidc\Oidc\OidcException;
+use Joomla\Plugin\System\HqOidc\Oidc\TokenVerifier;
 
 /**
  * HQ OIDC system plugin.
@@ -36,16 +43,25 @@ use Joomla\Event\SubscriberInterface;
  */
 final class HqOidc extends CMSPlugin implements SubscriberInterface
 {
-    private const SESSION_RETURN   = 'hqoidc.return';
+    /** Pending authorization (state, nonce, PKCE verifier, return URL) between login and callback. */
+    private const SESSION_AUTH = 'hqoidc.auth';
+
     private const SESSION_ID_TOKEN = 'hqoidc.id_token';
 
+    /** Seconds a pending authorization stays valid. */
+    private const AUTH_MAX_AGE = 600;
+
     protected $autoloadLanguage = true;
+
+    /** ID token captured in onUserLogout, redirected with in onUserAfterLogout. */
+    private ?string $pendingLogoutIdToken = null;
 
     public static function getSubscribedEvents(): array
     {
         return [
-            'onAfterRoute' => 'onAfterRoute',
-            'onUserLogout' => 'onUserLogout',
+            'onAfterRoute'      => 'onAfterRoute',
+            'onUserLogout'      => 'onUserLogout',
+            'onUserAfterLogout' => 'onUserAfterLogout',
         ];
     }
 
@@ -88,53 +104,75 @@ final class HqOidc extends CMSPlugin implements SubscriberInterface
     }
 
     /**
-     * Joomla-side logout hook. When single_logout is on and we have a stored
-     * id_token, destroy the Joomla session and redirect to Keycloak's end_session.
-     *
-     * This fires for both our task=logout flow and the normal Joomla logout button,
-     * so single sign-out works regardless of where the user clicks logout.
+     * Fires for our task=logout flow and for Joomla's own logout button alike.
+     * Runs before plg_user_joomla destroys the session, so this is the last
+     * chance to read the ID token; the redirect itself waits for
+     * onUserAfterLogout so Joomla completes its own logout first.
      */
-    public function onUserLogout($event = null): bool
+    public function onUserLogout($event = null): void
     {
         $app = $this->getApplication();
 
         if (!$app instanceof CMSApplicationInterface) {
-            return true;
+            return;
         }
 
         if ((int) $this->params->get('single_logout', 1) !== 1) {
-            return true;
+            return;
         }
 
-        $session = $app->getSession();
-        $idToken = $session->get(self::SESSION_ID_TOKEN);
+        $idToken = $app->getSession()->get(self::SESSION_ID_TOKEN);
 
-        if (!$idToken) {
-            return true;
+        if (!\is_string($idToken) || $idToken === '') {
+            return;
         }
 
-        // Destroy the local Joomla session before bouncing to Keycloak so the
-        // user is also fully logged out locally. (signOut() below will
-        // header() + exit and skip Joomla's normal session teardown.)
+        // An administrator ending another user's session must not be signed
+        // out of the IdP themselves.
+        $subject   = $event instanceof EventInterface ? $event->getArgument('subject') : null;
+        $targetId  = \is_array($subject) ? (int) ($subject['id'] ?? 0) : 0;
+        $currentId = (int) ($app->getIdentity()?->id ?? 0);
+
+        if ($targetId !== 0 && $targetId !== $currentId) {
+            return;
+        }
+
+        $this->pendingLogoutIdToken = $idToken;
+    }
+
+    public function onUserAfterLogout($event = null): void
+    {
+        $idToken                    = $this->pendingLogoutIdToken;
+        $this->pendingLogoutIdToken = null;
+
+        if ($idToken === null) {
+            return;
+        }
+
+        $app = $this->getApplication();
+
+        if (!$app instanceof CMSApplicationInterface) {
+            return;
+        }
+
         try {
-            $session->destroy();
-        } catch (\Throwable $e) {
-            // Best-effort; continue with the redirect anyway.
-        }
+            [, $client] = $this->connect();
 
-        try {
-            $this->ensureVendorAutoload();
-            $client = $this->buildClient($app);
-            $client->signOut(
-                (string) $idToken,
+            $url = $client->endSessionUrl(
+                $idToken,
                 $this->absoluteUrl($this->params->get('post_logout_url', '/') ?: '/')
             );
-            // signOut() does header() + exit. Unreachable below.
+
+            if ($url === null) {
+                $this->log('Single logout skipped: provider publishes no end_session_endpoint');
+
+                return;
+            }
+
+            $app->redirect($url);
         } catch (\Throwable $e) {
             $this->log('Single-logout failure: ' . $e->getMessage(), Log::WARNING);
         }
-
-        return true;
     }
 
     // -----------------------------------------------------------------------
@@ -143,69 +181,70 @@ final class HqOidc extends CMSPlugin implements SubscriberInterface
 
     private function startLogin(CMSApplicationInterface $app): void
     {
-        $return = $app->getInput()->getString('return');
-        $this->log('login: received return param = ' . ($return ?? '(null)'));
+        $returnUrl = $this->requestedReturnUrl($app);
 
-        if ($return !== null && $return !== '') {
-            // If the value already looks like a URL (relative path starting with /,
-            // or absolute http/https), use it as-is. Otherwise attempt a base64
-            // decode — Joomla's own login flows pass return URLs in base64. A
-            // raw relative path like "/foo/bar" can be coincidentally valid
-            // base64, so the URL-shape check must come first.
-            $looksLikeUrl = str_starts_with($return, '/') || preg_match('#^https?://#i', $return) === 1;
+        [, $client] = $this->connect();
 
-            if ($looksLikeUrl) {
-                $candidate = $return;
-                $usedBase64 = false;
-            } else {
-                $decoded = base64_decode($return, true);
-                if ($decoded !== false) {
-                    $candidate  = $decoded;
-                    $usedBase64 = true;
-                } else {
-                    $candidate  = $return;
-                    $usedBase64 = false;
-                }
-            }
+        $state        = Client::randomToken();
+        $nonce        = Client::randomToken();
+        $codeVerifier = Client::randomToken();
 
-            $safe = $this->isSafeReturnUrl($candidate);
+        $app->getSession()->set(self::SESSION_AUTH, [
+            'state'    => $state,
+            'nonce'    => $nonce,
+            'verifier' => $codeVerifier,
+            'return'   => $returnUrl,
+            'created'  => time(),
+        ]);
 
-            $this->log(sprintf(
-                'login: candidate=%s base64=%s safe=%s',
-                $candidate,
-                $usedBase64 ? 'yes' : 'no',
-                $safe ? 'yes' : 'no'
-            ));
-
-            if ($safe) {
-                // Write directly to $_SESSION (not the Joomla AttributeBag).
-                // jumbojett calls session_write_close() before redirecting to
-                // the IdP. That commits $_SESSION but does NOT serialise
-                // Joomla's AttributeBag — Joomla flushes the bag during its
-                // own shutdown flow, which never reaches us because jumbojett
-                // header()s and exit()s first. So we put the value in the same
-                // place jumbojett puts its own state/nonce/code_verifier.
-                if (session_status() === PHP_SESSION_NONE) {
-                    @session_start();
-                }
-                $_SESSION[self::SESSION_RETURN] = $candidate;
-            }
-        }
-
-        $client = $this->buildClient($app);
-        $client->authenticate();
-        // unreachable: authenticate() either redirects (exit) or throws.
+        // Joomla's redirect persists the session on shutdown; a raw header()
+        // + exit would not, which is why state must never bypass this path.
+        $app->redirect($client->authorizationUrl($state, $nonce, $codeVerifier));
     }
 
     private function handleCallback(CMSApplicationInterface $app): void
     {
-        $client = $this->buildClient($app);
+        $input   = $app->getInput();
+        $session = $app->getSession();
 
-        if (!$client->authenticate()) {
-            throw new OpenIDConnectClientException('Authentication did not complete');
+        // One-shot: whatever happens below, this state can never be replayed.
+        $pending = $session->get(self::SESSION_AUTH);
+        $session->remove(self::SESSION_AUTH);
+        $pending = \is_object($pending) ? (array) $pending : $pending;
+
+        $error = (string) $input->getCmd('error', '');
+
+        if ($error !== '') {
+            throw new OidcException(sprintf(
+                'IdP returned error "%s" (%s)',
+                $error,
+                self::logSafe((string) $input->getString('error_description', ''))
+            ));
         }
 
-        $claims = $client->getVerifiedClaims();
+        if (!\is_array($pending) || !isset($pending['state'], $pending['nonce'], $pending['verifier'], $pending['created'])) {
+            throw new OidcException(
+                'No pending authorization in the session (cookies blocked, session expired, or callback opened directly)'
+            );
+        }
+
+        $code  = (string) $input->getString('code', '');
+        $state = (string) $input->getString('state', '');
+
+        if ($code === '' || $state === '' || !hash_equals((string) $pending['state'], $state)) {
+            throw new OidcException('Authorization state mismatch');
+        }
+
+        if (time() - (int) $pending['created'] > self::AUTH_MAX_AGE) {
+            throw new OidcException('Pending authorization is older than ' . self::AUTH_MAX_AGE . ' seconds');
+        }
+
+        [$discovery, $client] = $this->connect();
+
+        $tokens = $client->exchangeCode($code, (string) $pending['verifier']);
+        $claims = (new TokenVerifier($discovery->issuer, $this->clientId()))
+            ->verify($tokens['id_token'], $client->fetchJwks(), (string) $pending['nonce']);
+        $claims = $this->mergeUserinfo($client, $tokens, $claims);
 
         $matchField   = $this->params->get('match_field', 'username');
         $usernameAttr = $this->params->get('claim_username', 'preferred_username');
@@ -218,12 +257,12 @@ final class HqOidc extends CMSPlugin implements SubscriberInterface
 
         if ($matchField === 'email') {
             if (!$email) {
-                throw new OpenIDConnectClientException('IdP did not return an email claim');
+                throw new OidcException('IdP did not return an email claim');
             }
             $userId = $this->findUserIdByEmail($email);
         } else {
             if (!$username) {
-                throw new OpenIDConnectClientException('IdP did not return a username claim');
+                throw new OidcException('IdP did not return a username claim');
             }
             $userId = UserHelper::getUserId($username);
         }
@@ -239,7 +278,7 @@ final class HqOidc extends CMSPlugin implements SubscriberInterface
                 $usernameAttr,
                 $username ?? '(null)',
                 $email ?? '(null)',
-                implode(',', $this->claimKeys($claims))
+                implode(',', array_keys($claims))
             ), Log::WARNING);
 
             $app->enqueueMessage(Text::_('PLG_SYSTEM_HQOIDC_ERR_USER_NOT_PROVISIONED'), 'warning');
@@ -258,23 +297,6 @@ final class HqOidc extends CMSPlugin implements SubscriberInterface
             return;
         }
 
-        // Read the post-login return URL out of $_SESSION (where startLogin
-        // wrote it, deliberately bypassing Joomla's AttributeBag — see the
-        // note in startLogin for the jumbojett/session_write_close reason).
-        // Read it BEFORE triggering onUserLogin too, because plg_user_joomla
-        // regenerates the session ID and may drop custom keys.
-        if (session_status() === PHP_SESSION_NONE) {
-            @session_start();
-        }
-        $returnUrl = $_SESSION[self::SESSION_RETURN] ?? null;
-        unset($_SESSION[self::SESSION_RETURN]);
-        $this->log('callback: return from session = ' . ($returnUrl ?: '(empty)'));
-
-        // Stash the id_token so onUserLogout can do RP-initiated logout later.
-        // Joomla's bag works fine here because we redirect via $app->redirect()
-        // (which runs Joomla's shutdown / bag flush), not jumbojett's redirect.
-        $app->getSession()->set(self::SESSION_ID_TOKEN, $client->getIdToken());
-
         $options = [
             'action'       => 'core.login.site',
             'remember'     => true,
@@ -284,9 +306,11 @@ final class HqOidc extends CMSPlugin implements SubscriberInterface
         ];
 
         // We bypass $app->login() (which runs the authentication plugin chain and
-        // would reject us for not supplying a password). Instead we replicate the
-        // post-authentication portion: import user plugins and trigger onUserLogin,
-        // which plg_user_joomla handles by establishing the Joomla session.
+        // would reject us for not supplying a password) and replicate what it
+        // does once authentication has succeeded: onUserLogin lets
+        // plg_user_joomla establish the session and load the identity, then
+        // the after-login plugins get that identity and the response type via
+        // the options (plg_user_joomla's MFA check reads $options['user']).
         $response                 = new \stdClass();
         $response->status         = Authentication::STATUS_SUCCESS;
         $response->type           = 'hqoidc';
@@ -297,24 +321,33 @@ final class HqOidc extends CMSPlugin implements SubscriberInterface
 
         PluginHelper::importPlugin('user');
 
-        $results = $app->triggerEvent('onUserLogin', [(array) $response, $options]);
+        $loginEvent = new LoginEvent('onUserLogin', ['subject' => (array) $response, 'options' => $options]);
+        $this->getDispatcher()->dispatch('onUserLogin', $loginEvent);
 
-        if (in_array(false, $results, true)) {
+        if (\in_array(false, $loginEvent->getArgument('result', []), true)) {
             throw new \RuntimeException('A user plugin denied the OIDC login');
         }
 
-        $app->triggerEvent('onUserAfterLogin', [$options]);
+        $options['user']         = $app->getIdentity() ?? $user;
+        $options['responseType'] = $response->type;
 
-        if (!$returnUrl || !$this->isSafeReturnUrl($returnUrl)) {
-            $this->log(
-                'callback: falling back to post_login_url (return was '
-                . ($returnUrl ? 'rejected by isSafeReturnUrl: ' . $returnUrl : 'empty')
-                . ')'
-            );
+        $this->getDispatcher()->dispatch('onUserAfterLogin', new AfterLoginEvent('onUserAfterLogin', [
+            'options' => $options,
+            'subject' => (array) $response,
+        ]));
+
+        // Kept for RP-initiated logout. Set after login so it lives in the
+        // session plg_user_joomla just established.
+        $session->set(self::SESSION_ID_TOKEN, $tokens['id_token']);
+
+        $returnUrl = $pending['return'] ?? null;
+
+        if (!\is_string($returnUrl) || !$this->isSafeReturnUrl($returnUrl)) {
+            $this->log('callback: no usable return URL, falling back to post_login_url');
             $returnUrl = $this->params->get('post_login_url', '/') ?: '/';
         }
 
-        $this->log('callback: redirecting to ' . $returnUrl);
+        $this->log('callback: redirecting to ' . self::logSafe($returnUrl));
         $app->redirect($this->absoluteUrl($returnUrl));
     }
 
@@ -323,7 +356,7 @@ final class HqOidc extends CMSPlugin implements SubscriberInterface
         $user = $app->getIdentity();
 
         if ($user && !$user->guest) {
-            // Triggers onUserLogout which, if single_logout is on, redirects to Keycloak.
+            // Triggers onUserLogout/onUserAfterLogout which, with single_logout on, redirect to the IdP.
             $app->logout();
         }
 
@@ -335,61 +368,118 @@ final class HqOidc extends CMSPlugin implements SubscriberInterface
     // Helpers
     // -----------------------------------------------------------------------
 
-    private function buildClient(CMSApplicationInterface $app): OpenIDConnectClient
+    /**
+     * @return array{0: Discovery, 1: Client}
+     */
+    private function connect(): array
     {
-        $issuer       = rtrim((string) $this->params->get('issuer_url', ''), '/');
-        $clientId     = (string) $this->params->get('client_id', '');
-        $clientSecret = (string) $this->params->get('client_secret', '');
-        $scopes       = (string) $this->params->get('scopes', 'openid profile email');
+        $issuer = rtrim((string) $this->params->get('issuer_url', ''), '/');
 
-        if ($issuer === '' || $clientId === '') {
-            throw new OpenIDConnectClientException('HQ OIDC is not configured (issuer_url and client_id required)');
+        if ($issuer === '' || $this->clientId() === '') {
+            throw new OidcException('HQ OIDC is not configured (issuer_url and client_id required)');
         }
 
-        $client = new OpenIDConnectClient($issuer, $clientId, $clientSecret ?: null);
-        $client->setRedirectURL($this->callbackUrl());
+        $http      = JoomlaHttpClient::create();
+        $discovery = Discovery::fetch($http, $issuer);
+        $scopes    = preg_split('/\s+/', (string) $this->params->get('scopes', 'openid profile email')) ?: [];
 
-        $scopeList = array_values(array_filter(preg_split('/\s+/', $scopes) ?: []));
-        if ($scopeList) {
-            $client->addScope($scopeList);
+        $client = new Client(
+            $http,
+            $discovery,
+            $this->clientId(),
+            (string) $this->params->get('client_secret', '') ?: null,
+            rtrim(Uri::root(), '/') . '/index.php?option=hqoidc&task=callback',
+            array_values(array_filter($scopes))
+        );
+
+        return [$discovery, $client];
+    }
+
+    private function clientId(): string
+    {
+        return (string) $this->params->get('client_id', '');
+    }
+
+    /**
+     * Userinfo is supplementary: providers like Okta keep profile claims out
+     * of the ID token. A transport failure therefore degrades to ID token
+     * claims only, but a sub mismatch is fatal (OIDC Core 5.3.2).
+     *
+     * @param array<string, mixed> $tokens
+     * @param array<string, mixed> $claims
+     *
+     * @return array<string, mixed>
+     */
+    private function mergeUserinfo(Client $client, array $tokens, array $claims): array
+    {
+        $accessToken = $tokens['access_token'] ?? null;
+
+        if (!\is_string($accessToken) || $accessToken === '') {
+            return $claims;
         }
 
-        // Enable PKCE (S256). Confidential clients still benefit from PKCE.
-        $client->setCodeChallengeMethod('S256');
+        try {
+            $userinfo = $client->fetchUserinfo($accessToken);
+        } catch (\RuntimeException $e) {
+            $this->log('userinfo skipped: ' . $e->getMessage(), Log::WARNING);
 
-        return $client;
+            return $claims;
+        }
+
+        if ($userinfo === null) {
+            return $claims;
+        }
+
+        if (($userinfo['sub'] ?? null) !== $claims['sub']) {
+            throw new OidcException('Userinfo "sub" does not match the ID token');
+        }
+
+        // ID token claims are signature-verified, so they win on conflict.
+        return array_merge($userinfo, $claims);
     }
 
-    private function callbackUrl(): string
+    /**
+     * The ?return= parameter, validated. Joomla's own login flows pass return
+     * URLs base64-encoded, but a raw relative path like "/foo/bar" can be
+     * coincidentally valid base64, so the URL-shape check comes first.
+     */
+    private function requestedReturnUrl(CMSApplicationInterface $app): ?string
     {
-        return rtrim(Uri::root(), '/') . '/index.php?option=hqoidc&task=callback';
-    }
+        $return = (string) $app->getInput()->getString('return', '');
 
-    private function claim(array|object|null $claims, string $key): ?string
-    {
-        if ($claims === null || $key === '') {
+        if ($return === '') {
             return null;
         }
 
-        $value = is_array($claims) ? ($claims[$key] ?? null) : ($claims->{$key} ?? null);
+        $looksLikeUrl = str_starts_with($return, '/') || preg_match('#^https?://#i', $return) === 1;
+        $candidate    = $return;
+
+        if (!$looksLikeUrl) {
+            $decoded = base64_decode($return, true);
+
+            if ($decoded !== false) {
+                $candidate = $decoded;
+            }
+        }
+
+        $safe = $this->isSafeReturnUrl($candidate);
+        $this->log(sprintf('login: return candidate=%s safe=%s', self::logSafe($candidate), $safe ? 'yes' : 'no'));
+
+        return $safe ? $candidate : null;
+    }
+
+    /**
+     * @param array<string, mixed> $claims
+     */
+    private function claim(array $claims, string $key): ?string
+    {
+        $value = $claims[$key] ?? null;
 
         if ($value === null || $value === '') {
             return null;
         }
 
-        return is_scalar($value) ? (string) $value : null;
-    }
-
-    /**
-     * Return the top-level claim keys we received, for diagnostics. Never logs values.
-     */
-    private function claimKeys(array|object|null $claims): array
-    {
-        if ($claims === null) {
-            return [];
-        }
-
-        return is_array($claims) ? array_keys($claims) : array_keys((array) $claims);
+        return \is_scalar($value) ? (string) $value : null;
     }
 
     private function findUserIdByEmail(string $email): int
@@ -482,7 +572,7 @@ final class HqOidc extends CMSPlugin implements SubscriberInterface
 
     private function ensureVendorAutoload(): void
     {
-        if (class_exists(OpenIDConnectClient::class, false)) {
+        if (class_exists(JWT::class, false)) {
             return;
         }
 
@@ -493,6 +583,15 @@ final class HqOidc extends CMSPlugin implements SubscriberInterface
         }
 
         require_once $autoload;
+    }
+
+    /**
+     * Strip control characters and cap length before request-supplied
+     * values reach the log file.
+     */
+    private static function logSafe(string $value): string
+    {
+        return substr(preg_replace('/[\x00-\x1F\x7F]+/', ' ', $value) ?? '', 0, 200);
     }
 
     private function log(string $message, int $priority = Log::INFO): void
