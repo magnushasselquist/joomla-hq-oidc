@@ -1,6 +1,6 @@
 # HQ OIDC – minimal Joomla OIDC SSO plugin
 
-**Purpose:** Joomla 5/6 system plugin (`plg_system_hqoidc`) that logs users in via OpenID Connect (auth code + PKCE, match-only or auto-create users, RP-initiated logout). Built for malarscouterna.se against Scouterna's Keycloak. Public repo: `github.com/magnushasselquist/joomla-hq-oidc` (the folder name still says "easy-oidc", the plugin was renamed to HQ OIDC in v1.0.1). Currently v1.0.2 in production.
+**Purpose:** Joomla 5/6 system plugin (`plg_system_hqoidc`) that logs users in via OpenID Connect (auth code + PKCE, match-only or auto-create users, RP-initiated logout). Built for malarscouterna.se against Scouterna's Keycloak. Public repo: `github.com/magnushasselquist/joomla-hq-oidc` (the folder name still says "easy-oidc", the plugin was renamed to HQ OIDC in v1.0.1). v1.1.0 (own OIDC client, released 2026-09-29) is the current release; `PLAN.md` tracks status.
 
 **Stack:** PHP >= 8.1, Composer (`composer.phar` bundled at repo root), `firebase/php-jwt` as the only runtime dependency. Namespaced plugin: `plg_system_hqoidc/src/Extension/HqOidc.php` (Joomla glue: routing, session, user matching, login/logout events) + `src/Oidc/` (`Discovery`, `Client`, `TokenVerifier`, `HttpClientInterface`/`JoomlaHttpClient` — the OIDC protocol code) + `services/provider.php` + manifest `hqoidc.xml`; en-GB and sv-SE language files.
 

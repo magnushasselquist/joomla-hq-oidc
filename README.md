@@ -145,14 +145,18 @@ The release process is fully manual — no CI yet. To cut version `x.y.z`:
 1. Bump `<version>x.y.z</version>` in `plg_system_hqoidc/hqoidc.xml`.
 2. In `docs/updates.xml`, bump both `<version>` and the `<downloadurl>` (the
    `v<x.y.z>` segment and the `-x.y.z.zip` filename must match the new tag).
-3. `./build.sh` → produces `dist/plg_system_hqoidc-x.y.z.zip`.
-4. Commit and push:
+3. `./build.sh` → produces `dist/plg_system_hqoidc-x.y.z.zip` and prints its
+   checksums.
+4. Paste the printed `<sha256>` and `<sha512>` into `docs/updates.xml`. Joomla
+   verifies the downloaded zip against them and warns the admin when they are
+   missing.
+5. Commit and push:
    ```sh
    git add plg_system_hqoidc/hqoidc.xml docs/updates.xml
    git commit -m "Release vx.y.z"
    git push
    ```
-5. Create the GitHub release with the zip attached:
+6. Create the GitHub release with the zip attached:
    ```sh
    gh release create vx.y.z dist/plg_system_hqoidc-x.y.z.zip \
        --title "vx.y.z" --notes "Release notes here"
@@ -168,6 +172,9 @@ updater.
 
 - The `<downloadurl>` in `updates.xml` and the GitHub release tag must agree on
   the exact `vx.y.z` form (with the `v` prefix).
+- The checksums in `updates.xml` must match the zip attached to the release
+  byte for byte. Rebuilding produces a different zip, so attach the exact file
+  you hashed.
 - `<element>hqoidc</element>` and `<folder>system</folder>` in `updates.xml`
   must keep matching the plugin name in `hqoidc.xml` — Joomla uses these to
   pair an installed plugin to its update feed.

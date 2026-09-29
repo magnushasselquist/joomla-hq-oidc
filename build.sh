@@ -52,3 +52,7 @@ echo "==> Packaging ${ZIP}"
 
 echo "==> Done"
 ls -lh "${ZIP}"
+
+echo "==> Checksums for docs/updates.xml (Joomla verifies the download against them)"
+echo "<sha256>$(shasum -a 256 "${ZIP}" | cut -d' ' -f1)</sha256>"
+echo "<sha512>$(shasum -a 512 "${ZIP}" | cut -d' ' -f1)</sha512>"
