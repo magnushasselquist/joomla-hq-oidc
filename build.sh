@@ -37,6 +37,9 @@ echo "==> Packaging ${ZIP}"
 ( cd "${PLUGIN_DIR}" && zip -rq "${ZIP}" . \
     -x '*.DS_Store' \
     -x 'composer.phar' \
+    -x 'tests/*' \
+    -x 'phpunit.xml' \
+    -x '.phpunit.cache/*' \
     -x 'vendor/*/tests/*' \
     -x 'vendor/*/test/*' \
     -x 'vendor/*/docs/*' \

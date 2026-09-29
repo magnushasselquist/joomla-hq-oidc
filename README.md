@@ -12,6 +12,11 @@ Designed to run on **Joomla 5** today and stay compatible with **Joomla 6**
 ## What it does
 
 - OIDC authorization-code flow with **PKCE**.
+- Verifies the ID token itself: signature against the provider's JWKS,
+  issuer, audience/`azp`, nonce and expiry. The only runtime dependency is
+  `firebase/php-jwt`.
+- Also reads the userinfo endpoint, so providers that keep profile claims out
+  of the ID token (Okta, some Keycloak mappers) still work.
 - Matches the IdP user to a Joomla user by **username** (claim
   `preferred_username`) or **email** — configurable. Defaults to username.
 - Two provisioning modes — **match-only** (reject unknown users, the safe
@@ -29,6 +34,10 @@ Designed to run on **Joomla 5** today and stay compatible with **Joomla 6**
 - No multi-IdP support. One plugin, one IdP.
 - No back-channel logout, no token refresh, no introspection. The plugin is for
   authentication only; we don't keep an OIDC session after login.
+- No PS256- or EdDSA-signed ID tokens. RS256/384/512 and ES256/384 are
+  supported; leave the client at RS256, the OIDC default.
+- No Apple Sign In (JWT-signed client secret, `form_post`, name only on first
+  login — it is not generic OIDC).
 
 ## Installing
 
@@ -61,6 +70,10 @@ In Joomla admin → **System → Plugins → System - HQ OIDC**:
 - *Valid post-logout redirect URIs*: `https://your-joomla-site.example/` (or whatever you
   set in "Post-logout URL")
 - Scopes: `openid`, `profile`, `email`.
+
+**Other providers:** anything that publishes `.well-known/openid-configuration`
+should work. Microsoft Entra ID needs the tenant-specific issuer
+(`https://login.microsoftonline.com/<tenant-id>/v2.0`), not `/common`.
 
 ## Usage — building your login button
 
@@ -109,7 +122,21 @@ Requirements: PHP 8.1+, `php composer.phar` (one comes bundled at the repo root)
 
 The script reads the version from `plg_system_hqoidc/hqoidc.xml`,
 regenerates `vendor/` with `--no-dev --optimize-autoloader`, and zips up the
-installable plugin (stripping vendor `tests/`, `docs/`, dotfiles, etc.).
+installable plugin (stripping `tests/`, vendor `docs/`, dotfiles, etc.).
+
+## Running the tests
+
+```sh
+cd plg_system_hqoidc
+php ../composer.phar install
+vendor/bin/phpunit
+```
+
+The suite covers discovery parsing (against documents captured from Keycloak,
+Google and Entra ID in `tests/fixtures/`), the token-endpoint client, and ID
+token verification with generated RSA and EC keys. `build.sh` reinstalls
+`vendor/` without dev dependencies, so run `composer install` again afterwards
+to get PHPUnit back.
 
 ## Releasing a new version
 
@@ -156,10 +183,15 @@ updater.
 - "No matching Joomla account was found" — provisioning is `match_only` and no
   Joomla user matches the IdP claim. Either create the Joomla user with the
   matching username/email, or flip provisioning to `auto-create`.
-- "Unable to determine state" from the OIDC library typically means the Joomla
-  session got reset between `task=login` and `task=callback`. Check that
+- "No pending authorization in the session" in the log means the Joomla
+  session was lost between `task=login` and `task=callback`. Check that
   cookies are not being blocked and that the site is served over HTTPS in
   production.
+- "ID token is signed with PS256 …" — switch the IdP client's ID token
+  signature algorithm to RS256.
+- "Discovery issuer … does not match" — the Issuer URL must be exactly what
+  the provider publishes as `issuer`; for Entra ID that is the tenant-specific
+  URL, never `/common`.
 
 ## Forward compatibility
 
