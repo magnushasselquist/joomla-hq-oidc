@@ -7,13 +7,13 @@
         <type>plugin</type>
         <folder>system</folder>
         <client>0</client>
-        <version>1.1.0</version>
+        <version>1.1.1</version>
         <infourl title="HQ OIDC on GitHub">https://github.com/magnushasselquist/joomla-hq-oidc</infourl>
         <downloads>
-            <downloadurl type="full" format="zip">https://github.com/magnushasselquist/joomla-hq-oidc/releases/download/v1.1.0/plg_system_hqoidc-1.1.0.zip</downloadurl>
+            <downloadurl type="full" format="zip">https://github.com/magnushasselquist/joomla-hq-oidc/releases/download/v1.1.1/plg_system_hqoidc-1.1.1.zip</downloadurl>
         </downloads>
-        <sha256>0d9760efb075fbb1143916f4c458a6a6feef582afb33ab27adc3b5c062eb924d</sha256>
-        <sha512>90be2904c047a3679f25bb024cc46bee6c115c873340c1605ff5ffc00fbcb9bcceeb5c06bbe6cddaf15d7c6c3e6da6cdecaf5e6fa95829b8aaff8cd71b5157a6</sha512>
+        <sha256>ea7c89c1dea0fae71a2c8e9660c62232ca5a712553bdeb34d56fdc08dc67a13c</sha256>
+        <sha512>3f1ea0e54a1b0bdc72ac7e94e65d5aa17985ddb3a7bd2d9e4b92c0d8752464464407edb46eae13159c89f7de0a76a2deb5d701fe6c1277848e7745d76f5af58c</sha512>
         <targetplatform name="joomla" version="(5|6)\.[0-9]+"/>
         <php_minimum>8.1</php_minimum>
         <maintainer>Magnus Hasselquist</maintainer>
