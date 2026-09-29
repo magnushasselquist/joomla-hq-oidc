@@ -12,6 +12,8 @@ namespace Joomla\Plugin\System\HqOidc\Extension;
 use Firebase\JWT\JWT;
 use Joomla\CMS\Application\CMSApplicationInterface;
 use Joomla\CMS\Authentication\Authentication;
+use Joomla\CMS\Event\User\AfterLoginEvent;
+use Joomla\CMS\Event\User\LoginEvent;
 use Joomla\CMS\Factory;
 use Joomla\CMS\Language\Text;
 use Joomla\CMS\Log\Log;
@@ -304,9 +306,11 @@ final class HqOidc extends CMSPlugin implements SubscriberInterface
         ];
 
         // We bypass $app->login() (which runs the authentication plugin chain and
-        // would reject us for not supplying a password). Instead we replicate the
-        // post-authentication portion: import user plugins and trigger onUserLogin,
-        // which plg_user_joomla handles by establishing the Joomla session.
+        // would reject us for not supplying a password) and replicate what it
+        // does once authentication has succeeded: onUserLogin lets
+        // plg_user_joomla establish the session and load the identity, then
+        // the after-login plugins get that identity and the response type via
+        // the options (plg_user_joomla's MFA check reads $options['user']).
         $response                 = new \stdClass();
         $response->status         = Authentication::STATUS_SUCCESS;
         $response->type           = 'hqoidc';
@@ -317,13 +321,20 @@ final class HqOidc extends CMSPlugin implements SubscriberInterface
 
         PluginHelper::importPlugin('user');
 
-        $results = $app->triggerEvent('onUserLogin', [(array) $response, $options]);
+        $loginEvent = new LoginEvent('onUserLogin', ['subject' => (array) $response, 'options' => $options]);
+        $this->getDispatcher()->dispatch('onUserLogin', $loginEvent);
 
-        if (\in_array(false, $results, true)) {
+        if (\in_array(false, $loginEvent->getArgument('result', []), true)) {
             throw new \RuntimeException('A user plugin denied the OIDC login');
         }
 
-        $app->triggerEvent('onUserAfterLogin', [$options]);
+        $options['user']         = $app->getIdentity() ?? $user;
+        $options['responseType'] = $response->type;
+
+        $this->getDispatcher()->dispatch('onUserAfterLogin', new AfterLoginEvent('onUserAfterLogin', [
+            'options' => $options,
+            'subject' => (array) $response,
+        ]));
 
         // Kept for RP-initiated logout. Set after login so it lives in the
         // session plg_user_joomla just established.
