@@ -6,14 +6,14 @@
     <copyright>(C) 2026 Magnus Hasselquist</copyright>
     <license>GPL-2.0-or-later</license>
     <authorEmail>magnus.hasselquist@gmail.com</authorEmail>
-    <authorUrl>https://github.com/magnushasselquist/joomla-hq-oidc</authorUrl>
+    <authorUrl>https://github.com/byhq-ab/joomla-hq-oidc</authorUrl>
     <version>1.1.1</version>
     <description>PLG_SYSTEM_HQOIDC_XML_DESCRIPTION</description>
     <namespace path="src">Joomla\Plugin\System\HqOidc</namespace>
     <scriptfile>script.php</scriptfile>
 
     <updateservers>
-        <server type="extension" priority="1" name="HQ OIDC Updates">https://magnushasselquist.github.io/joomla-hq-oidc/updates.xml</server>
+        <server type="extension" priority="1" name="HQ OIDC Updates">https://byhq-ab.github.io/joomla-hq-oidc/updates.xml</server>
     </updateservers>
 
     <files>
