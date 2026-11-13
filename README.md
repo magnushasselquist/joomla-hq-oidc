@@ -42,7 +42,7 @@ Designed to run on **Joomla 5** today and stay compatible with **Joomla 6**
 ## Installing
 
 1. Download the latest release `plg_system_hqoidc-x.y.z.zip` from
-   [GitHub Releases](https://github.com/magnushasselquist/joomla-hq-oidc/releases)
+   [GitHub Releases](https://github.com/byhq-ab/joomla-hq-oidc/releases)
    (or run `./build.sh` from the repo).
 2. In Joomla admin → **System → Install → Extensions** → upload the zip.
 3. Enable **System - HQ OIDC** under **System → Plugins**.
@@ -163,7 +163,7 @@ The release process is fully manual — no CI yet. To cut version `x.y.z`:
    ```
 
 Once the release is published, GitHub Pages serves the updated
-`updates.xml` at <https://magnushasselquist.github.io/joomla-hq-oidc/updates.xml>
+`updates.xml` at <https://byhq-ab.github.io/joomla-hq-oidc/updates.xml>
 (usually within a minute). Existing Joomla installations running the previous
 version will pick up the new release through Joomla's built-in extension
 updater.
@@ -180,6 +180,23 @@ updater.
   pair an installed plugin to its update feed.
 - `vendor/`, `composer.lock`, and `dist/` are gitignored. Don't commit them by
   accident.
+
+### Update server address
+
+The update server URL in `hqoidc.xml` is stored by every installation, and
+GitHub Pages does not redirect when a repository moves. Up to v1.1.1 the
+address was `https://magnushasselquist.github.io/joomla-hq-oidc/updates.xml`;
+from the next release it is `https://byhq-ab.github.io/joomla-hq-oidc/updates.xml`.
+The move is done in this order:
+
+1. Release the version whose manifest carries the new address while the repo
+   is still under `magnushasselquist`, so the old Pages address announces it.
+2. Transfer the repo to `byhq-ab` and enable Pages there (branch `main`,
+   folder `/docs`) so the new address serves `docs/updates.xml`.
+3. Keep the old address alive for sites that have not updated yet: a
+   `magnushasselquist/magnushasselquist.github.io` repo with a copy of
+   `docs/updates.xml` at `joomla-hq-oidc/updates.xml`. Refresh that copy on
+   every release until no known site runs v1.1.1 or older.
 
 ## Troubleshooting
 
