@@ -1,13 +1,23 @@
-# HQ OIDC — minimal Joomla SSO plugin
+# OIDC byHQ
+
+**OpenID Connect single sign-on for Joomla 5/6.**
 
 A small Joomla system plugin that authenticates users against an OpenID Connect
-identity provider. Tested with **Keycloak** and **Google**; standards-compliant,
-so it should work with anything that publishes `.well-known/openid-configuration`.
+identity provider. It is standards-compliant, so it should work with anything
+that publishes `.well-known/openid-configuration`; see
+[Supported identity providers](#supported-identity-providers) for what has
+actually been tested.
 
-Originally built for [mälarscouterna.se](https://malarscouterna.se) as a cheap,
-low-maintenance alternative to the miniOrange "Joomla SSO OAuth OIDC" plugin.
-Designed to run on **Joomla 5** today and stay compatible with **Joomla 6**
-(namespaced plugin, event-subscriber pattern, no deprecated APIs).
+OIDC byHQ is free software (GPL-2.0-or-later), developed and maintained by
+[byHQ AB](mailto:hello@byhq.se). It was originally built for
+[mälarscouterna.se](https://malarscouterna.se) as a cheap, low-maintenance
+alternative to the miniOrange "Joomla SSO OAuth OIDC" plugin, and is designed
+to run on **Joomla 5** today and stay compatible with **Joomla 6** (namespaced
+plugin, event-subscriber pattern, no deprecated APIs).
+
+The plugin was called "HQ OIDC" up to v1.1.1. The internal element name
+(`plg_system_hqoidc`, `hqoidc`) is unchanged, so existing installations update
+in place.
 
 ## What it does
 
@@ -39,20 +49,34 @@ Designed to run on **Joomla 5** today and stay compatible with **Joomla 6**
 - No Apple Sign In (JWT-signed client secret, `form_post`, name only on first
   login — it is not generic OIDC).
 
+## Supported identity providers
+
+| Provider | Status |
+| --- | --- |
+| Keycloak | Supported. Used in production; tested on every release. |
+| Google | Tested on Joomla 5.4 and 6.2. No single logout and no username claim; see [Google](#google). |
+| Microsoft Entra ID | Should work, not yet verified. Use the tenant-specific issuer; see [Other providers](#other-providers). |
+| Other OIDC providers | Should work if they publish `.well-known/openid-configuration` and sign ID tokens with RS256/384/512 or ES256/384. |
+
+"Should work" means the provider follows the standard the plugin implements
+(Entra ID's discovery document is covered by the unit tests), but no
+end-to-end login has been verified yet. Reports of working or failing setups
+are welcome as GitHub issues.
+
 ## Installing
 
 1. Download the latest release `plg_system_hqoidc-x.y.z.zip` from
    [GitHub Releases](https://github.com/magnushasselquist/joomla-hq-oidc/releases)
    (or run `./build.sh` from the repo).
 2. In Joomla admin → **System → Install → Extensions** → upload the zip.
-3. Enable **System - HQ OIDC** under **System → Plugins**.
+3. Enable **System - OIDC byHQ** under **System → Plugins**.
 
 Once installed, Joomla's built-in extension updater will pick up new releases
 automatically (the plugin manifest declares an update server).
 
 ## Configuring
 
-In Joomla admin → **System → Plugins → System - HQ OIDC**:
+In Joomla admin → **System → Plugins → System - OIDC byHQ**:
 
 | Setting | What to put |
 | --- | --- |
@@ -250,6 +274,16 @@ declares `<minimumPhp>8.1</minimumPhp>` and only uses public, non-deprecated
 APIs (`CMSApplicationInterface`, `Joomla\Event\SubscriberInterface`,
 `Joomla\Database\DatabaseInterface`, `Joomla\CMS\User\UserHelper`,
 `Joomla\CMS\User\User`).
+
+## Support
+
+- **Community support** via [GitHub issues](https://github.com/byhq-ab/joomla-hq-oidc/issues):
+  bug reports, questions and provider reports. Answered on a best-effort basis,
+  with no guaranteed response time or SLA.
+- **Paid help** (installation, identity provider setup, support agreements
+  and customisation) is available from byHQ AB: <hello@byhq.se>.
+
+Please do not post client secrets, tokens or full debug logs in public issues.
 
 ## License
 

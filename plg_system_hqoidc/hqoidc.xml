@@ -1,19 +1,19 @@
 <?xml version="1.0" encoding="utf-8"?>
 <extension type="plugin" group="system" method="upgrade">
     <name>plg_system_hqoidc</name>
-    <author>Magnus Hasselquist</author>
+    <author>byHQ AB</author>
     <creationDate>2026-05</creationDate>
-    <copyright>(C) 2026 Magnus Hasselquist</copyright>
+    <copyright>(C) 2026 byHQ AB</copyright>
     <license>GPL-2.0-or-later</license>
-    <authorEmail>magnus.hasselquist@gmail.com</authorEmail>
-    <authorUrl>https://github.com/magnushasselquist/joomla-hq-oidc</authorUrl>
+    <authorEmail>hello@byhq.se</authorEmail>
+    <authorUrl>https://github.com/byhq-ab/joomla-hq-oidc</authorUrl>
     <version>1.1.1</version>
     <description>PLG_SYSTEM_HQOIDC_XML_DESCRIPTION</description>
     <namespace path="src">Joomla\Plugin\System\HqOidc</namespace>
     <scriptfile>script.php</scriptfile>
 
     <updateservers>
-        <server type="extension" priority="1" name="HQ OIDC Updates">https://magnushasselquist.github.io/joomla-hq-oidc/updates.xml</server>
+        <server type="extension" priority="1" name="OIDC byHQ Updates">https://magnushasselquist.github.io/joomla-hq-oidc/updates.xml</server>
     </updateservers>
 
     <files>
