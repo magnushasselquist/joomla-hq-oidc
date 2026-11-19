@@ -2,7 +2,7 @@
 <updates>
     <update>
         <name>HQ OIDC</name>
-        <description>Minimal Joomla OIDC SSO plugin (Keycloak-tested).</description>
+        <description>Minimal Joomla OIDC SSO plugin (tested with Keycloak and Google).</description>
         <element>hqoidc</element>
         <type>plugin</type>
         <folder>system</folder>

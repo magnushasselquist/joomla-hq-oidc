@@ -1,8 +1,8 @@
 # HQ OIDC — minimal Joomla SSO plugin
 
 A small Joomla system plugin that authenticates users against an OpenID Connect
-identity provider (designed for Keycloak, but standards-compliant so it works
-with anything that publishes `.well-known/openid-configuration`).
+identity provider. Tested with **Keycloak** and **Google**; standards-compliant,
+so it should work with anything that publishes `.well-known/openid-configuration`.
 
 Originally built for [mälarscouterna.se](https://malarscouterna.se) as a cheap,
 low-maintenance alternative to the miniOrange "Joomla SSO OAuth OIDC" plugin.
@@ -22,7 +22,7 @@ Designed to run on **Joomla 5** today and stay compatible with **Joomla 6**
 - Two provisioning modes — **match-only** (reject unknown users, the safe
   default) or **auto-create** (provision new Joomla users from claims).
 - **RP-initiated single logout** — logging out of Joomla also signs the user out
-  of the IdP.
+  of the IdP, when the IdP supports it (Keycloak does, Google does not).
 - All configuration via standard Joomla plugin parameters.
 
 ## What it deliberately does *not* do
@@ -71,8 +71,51 @@ In Joomla admin → **System → Plugins → System - HQ OIDC**:
   set in "Post-logout URL")
 - Scopes: `openid`, `profile`, `email`.
 
-**Other providers:** anything that publishes `.well-known/openid-configuration`
-should work. Microsoft Entra ID needs the tenant-specific issuer
+### Google
+
+Tested against Google on Joomla 5.4 and 6.2.
+
+**Client setup** in the [Google Cloud Console](https://console.cloud.google.com/):
+
+1. Create (or pick) a project.
+2. *Google Auth Platform → Branding / Audience*: choose **Internal** if only
+   accounts in your Google Workspace domain should be able to sign in, or
+   **External** for any Google account (while the app is in *Testing*, only
+   listed test users can sign in). Scopes: `openid`, `email`, `profile`.
+3. *Clients → Create client → Web application*. Authorized redirect URI:
+   `https://your-joomla-site.example/index.php?option=hqoidc&task=callback`.
+   Google only accepts `http://` for `localhost`.
+4. Copy the client ID and client secret into the plugin.
+
+**Plugin settings:**
+
+| Setting | Value |
+| --- | --- |
+| Issuer URL | `https://accounts.google.com` |
+| Scopes | `openid email profile` |
+| Match field | `Email` |
+| Single Logout | No effect (see below); leave it on or turn it off |
+
+**Limitations:**
+
+- **No username claim.** Google sends no `preferred_username`, so *Match field:
+  Username* never finds anyone. Match on email. Auto-created users get their
+  email address as Joomla username.
+- **No single logout.** Google publishes no `end_session_endpoint`, so logging
+  out signs the user out of Joomla only; they stay signed in to Google, and
+  the next login goes straight through without a password prompt. The debug
+  log notes "Single logout skipped".
+- **Anyone with a Google account can authenticate** when the consent screen is
+  External. With *Auto-create* that means anyone can get a Joomla account.
+  Use *Match only*, or an Internal (Workspace-only) consent screen. The plugin
+  does not filter on Google's `hd` (Workspace domain) claim.
+- Both forms of Google's ID token issuer are accepted: `https://accounts.google.com`
+  and the scheme-less `accounts.google.com` that Google documents as equivalent.
+
+### Other providers
+
+Anything that publishes `.well-known/openid-configuration` should work.
+Microsoft Entra ID needs the tenant-specific issuer
 (`https://login.microsoftonline.com/<tenant-id>/v2.0`), not `/common`.
 
 ## Usage — building your login button
