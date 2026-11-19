@@ -1,7 +1,7 @@
 <?php
 /**
  * @package     plg_system_hqoidc
- * @copyright   (C) 2026 Magnus Hasselquist
+ * @copyright   (C) 2026 byHQ AB
  * @license     GPL-2.0-or-later
  */
 
@@ -34,7 +34,7 @@ use Joomla\Plugin\System\HqOidc\Oidc\OidcException;
 use Joomla\Plugin\System\HqOidc\Oidc\TokenVerifier;
 
 /**
- * HQ OIDC system plugin.
+ * OIDC byHQ system plugin.
  *
  * Handles OIDC authentication against an external IdP (designed for Keycloak)
  * via three custom URLs:
@@ -408,7 +408,7 @@ final class HqOidc extends CMSPlugin implements SubscriberInterface
         $issuer = rtrim((string) $this->params->get('issuer_url', ''), '/');
 
         if ($issuer === '' || $this->clientId() === '') {
-            throw new OidcException('HQ OIDC is not configured (issuer_url and client_id required)');
+            throw new OidcException('OIDC byHQ is not configured (issuer_url and client_id required)');
         }
 
         $http      = JoomlaHttpClient::create();
@@ -611,7 +611,7 @@ final class HqOidc extends CMSPlugin implements SubscriberInterface
         $autoload = __DIR__ . '/../../vendor/autoload.php';
 
         if (!is_file($autoload)) {
-            throw new \RuntimeException('HQ OIDC vendor/ is missing — reinstall the plugin package');
+            throw new \RuntimeException('OIDC byHQ vendor/ is missing — reinstall the plugin package');
         }
 
         require_once $autoload;
