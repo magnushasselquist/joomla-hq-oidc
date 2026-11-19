@@ -1,7 +1,7 @@
 <?php
 /**
  * @package     plg_system_hqoidc
- * @copyright   (C) 2026 Magnus Hasselquist
+ * @copyright   (C) 2026 byHQ AB
  * @license     GPL-2.0-or-later
  */
 
