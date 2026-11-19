@@ -19,6 +19,8 @@ Designed to run on **Joomla 5** today and stay compatible with **Joomla 6**
   of the ID token (Okta, some Keycloak mappers) still work.
 - Matches the IdP user to a Joomla user by **username** (claim
   `preferred_username`) or **email** — configurable. Defaults to username.
+  An email the IdP marks `email_verified: false` is never used to match or
+  create a Joomla user.
 - Two provisioning modes — **match-only** (reject unknown users, the safe
   default) or **auto-create** (provision new Joomla users from claims).
 - **RP-initiated single logout** — logging out of Joomla also signs the user out

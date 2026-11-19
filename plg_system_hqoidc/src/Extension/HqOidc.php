@@ -26,6 +26,7 @@ use Joomla\CMS\User\UserHelper;
 use Joomla\Database\DatabaseInterface;
 use Joomla\Event\EventInterface;
 use Joomla\Event\SubscriberInterface;
+use Joomla\Plugin\System\HqOidc\Oidc\Claims;
 use Joomla\Plugin\System\HqOidc\Oidc\Client;
 use Joomla\Plugin\System\HqOidc\Oidc\Discovery;
 use Joomla\Plugin\System\HqOidc\Oidc\JoomlaHttpClient;
@@ -223,6 +224,8 @@ final class HqOidc extends CMSPlugin implements SubscriberInterface
         }
 
         if (!\is_array($pending) || !isset($pending['state'], $pending['nonce'], $pending['verifier'], $pending['created'])) {
+            $this->ignoreCallbackIfSignedIn($app);
+
             throw new OidcException(
                 'No pending authorization in the session (cookies blocked, session expired, or callback opened directly)'
             );
@@ -232,6 +235,8 @@ final class HqOidc extends CMSPlugin implements SubscriberInterface
         $state = (string) $input->getString('state', '');
 
         if ($code === '' || $state === '' || !hash_equals((string) $pending['state'], $state)) {
+            $this->ignoreCallbackIfSignedIn($app);
+
             throw new OidcException('Authorization state mismatch');
         }
 
@@ -253,11 +258,19 @@ final class HqOidc extends CMSPlugin implements SubscriberInterface
 
         $username = $this->claim($claims, $usernameAttr);
         $email    = $this->claim($claims, $emailAttr);
-        $name     = $this->claim($claims, $nameAttr) ?: $username ?: $email;
+
+        // An unverified address must neither link to nor create a Joomla
+        // account: some IdPs let users type in any address they like.
+        if ($email !== null && Claims::emailUnverified($claims)) {
+            $this->log('IdP reports email_verified=false, ignoring the email claim for ' . self::logSafe($email), Log::WARNING);
+            $email = null;
+        }
+
+        $name = $this->claim($claims, $nameAttr) ?: $username ?: $email;
 
         if ($matchField === 'email') {
             if (!$email) {
-                throw new OidcException('IdP did not return an email claim');
+                throw new OidcException('IdP did not return a usable email claim (missing, or email_verified is false)');
             }
             $userId = $this->findUserIdByEmail($email);
         } else {
@@ -349,6 +362,25 @@ final class HqOidc extends CMSPlugin implements SubscriberInterface
 
         $this->log('callback: redirecting to ' . self::logSafe($returnUrl));
         $app->redirect($this->absoluteUrl($returnUrl));
+    }
+
+    /**
+     * A double-clicked login button starts two authorizations, and the IdP
+     * answers both. The first callback signs the user in and consumes the
+     * pending state, so the second can never validate. Showing "sign-in
+     * failed" to a user who is signed in is wrong; nothing is authenticated
+     * here, so just send them on.
+     */
+    private function ignoreCallbackIfSignedIn(CMSApplicationInterface $app): void
+    {
+        $identity = $app->getIdentity();
+
+        if (!$identity || $identity->guest) {
+            return;
+        }
+
+        $this->log('callback: stale or duplicate callback for an already signed-in user, ignoring');
+        $app->redirect($this->absoluteUrl($this->params->get('post_login_url', '/') ?: '/'));
     }
 
     private function handleLogout(CMSApplicationInterface $app): void
