@@ -255,17 +255,12 @@ updater.
 The update server URL in `hqoidc.xml` is stored by every installation, and
 GitHub Pages does not redirect when a repository moves. Up to v1.1.1 the
 address was `https://magnushasselquist.github.io/joomla-hq-oidc/updates.xml`;
-from the next release it is `https://byhq-ab.github.io/joomla-hq-oidc/updates.xml`.
-The move is done in this order:
+since v1.2.0 it is `https://byhq-ab.github.io/joomla-hq-oidc/updates.xml`.
 
-1. Release the version whose manifest carries the new address while the repo
-   is still under `magnushasselquist`, so the old Pages address announces it.
-2. Transfer the repo to `byhq-ab` and enable Pages there (branch `main`,
-   folder `/docs`) so the new address serves `docs/updates.xml`.
-3. Keep the old address alive for sites that have not updated yet: a
-   `magnushasselquist/magnushasselquist.github.io` repo with a copy of
-   `docs/updates.xml` at `joomla-hq-oidc/updates.xml`. Refresh that copy on
-   every release until no known site runs v1.1.1 or older.
+The old address is no longer served. A site still running v1.1.1 or older
+will not be offered new versions through the Joomla updater: install the
+latest zip from [GitHub Releases](https://github.com/byhq-ab/joomla-hq-oidc/releases)
+once by hand, and it follows the new address from then on.
 
 ## Troubleshooting
 
